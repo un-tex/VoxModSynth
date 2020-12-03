@@ -74,10 +74,15 @@ using namespace std;
 const int   sz = 16;
 
 // name of the problem (files in subdirectory exemplars/)
-string problem = "towers";
+string problem = "test";
+// string problem = "towers";
 // string problem = "simple";
 // string problem = "flat";
 // string problem = "blog6";
+
+// name of the initial scene (object + contact points)
+bool use_scene = false;
+string scene = "scene";
 
 // name of the tilemap (files in subdirectory exemplars/)
 string tilemap = "castle";
@@ -346,6 +351,29 @@ bool init_global_empty(Array3D<Presence>& S, int lbl_empty,int lbl_ground=-1)
 
 /* -------------------------------------------------------- */
 
+bool init_global_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
+  ForArray3D(S, i, j, k) {
+    S.at(i, j, k).fill(false);
+    if (k > 0) {
+      if ((int) scene.at(i, j, k) == 253) { // object
+        S.at(i, j, k).set(pal2id[253], true);
+        
+      } else if ((int) scene.at(i, j, k) == 252) { // contact
+        S.at(i, j, k).set(pal2id[252], true);
+        //std::cout << i << " " << j << " " << k << "\n";
+      } else { // empty
+        S.at(i, j, k).set(pal2id[255], true);
+      }
+    } else {  // ground
+      S.at(i, j, k).set(pal2id[254], true);
+      
+    }
+  }
+  return true;
+}
+
+/* -------------------------------------------------------- */
+
 // Resets a sub-domain with an empty soup. The border is preserved and
 // constraints are propagated inside.
 // Returns true on success, false otherwise (i.e. constraints cannot be resolved).
@@ -358,7 +386,17 @@ bool reinit_sub(Array3D<Presence>& S, int lbl_empty, AAB<3, int> sub)
   ForRange(k, cri[2] + 1, cra[2] - 1) {
     ForRange(j, cri[1] + 1, cra[1] - 1) {
       ForRange(i, cri[0] + 1, cra[0] - 1) {
-        S.at(i, j, k).fill(true);
+        /*----------------------------------------------------------*/
+        if (use_scene) {
+          if (!S.at(i,j,k)[pal2id[253]] && !S.at(i,j,k)[pal2id[252]]) {
+            S.at(i, j, k).fill(true); // only original line in this section
+            S.at(i, j, k).set(pal2id[253], false);
+            S.at(i, j, k).set(pal2id[252], false);
+          }
+        } else {
+          S.at(i, j, k).fill(true);
+        }
+        /*----------------------------------------------------------*/
       }
     }
   }
@@ -439,7 +477,7 @@ bool synthesize(
   v3i starts = box.minCorner();
   v3i ends   = box.maxCorner();
   int sign[] = { 1, 1, 1 };
-  ForIndex(p, 3) {
+  ForIndex(p, 3) {    // creates a random vector of 1 or -1
     sign[p] = 1 - 2 * (rand() & 1);
   }
   ForIndex(p, 3) {
@@ -453,7 +491,7 @@ bool synthesize(
   v3i cur = starts;
   bool failed = false;
   while (!failed) {
-
+    // for loop over the domain w/ random directions and starting points
     cur[order[0]] += sign[order[0]];
     if (cur[order[0]] == ends[order[0]]) {
       cur[order[0]] = starts[order[0]];
@@ -520,16 +558,16 @@ void loadFromVox(const char *fname,Array3D<uchar>& _voxels,Array<v3b>& _palette)
   FILE *f;
   f = fopen(fname, "rb");
   sl_assert(f != NULL);
-  long sx, sy, sz;
+  long sx, sy, sz;    // grid size
   fread(&sx, 4, 1, f);
   fread(&sy, 4, 1, f);
   fread(&sz, 4, 1, f);
   _voxels.allocate(sx, sy, sz);
   ForIndex(i, sx) { ForIndex(j, sy) { ForIndex(k, sz) {
-        fread(&_voxels.at(i, j, k), sizeof(uchar), 1, f);
+        fread(&_voxels.at(i, j, k), sizeof(uchar), 1, f);   // read voxel label
   } } }
   _palette.allocate(256);
-  fread(_palette.raw(), sizeof(v3b), 256, f);
+  fread(_palette.raw(), sizeof(v3b), 256, f);   // read palette information
   fclose(f);
 }
 
@@ -546,15 +584,15 @@ void load3DProblem(const char *fname)
   // read voxels
   Array3D<uchar> grid;
   loadFromVox(fname, grid, palette);
-  // build label set
+  // build (unique) label set
   set<uchar> labels;
   ForArray3D(grid, i, j, k) {
     uchar lbl = grid.at(i, j, k);
     labels.insert(lbl);
   }
-  num_lbls = (int)labels.size();
+  num_lbls = (int)labels.size();    // # of different labels
   int id = 0;
-  for (uchar l : labels) {
+  for (uchar l : labels) {    // unique id \in [0, num_lbls] for each label \in [0, 255]
     pal2id[l] = id;
     id2pal[id] = l;
     id++;
@@ -562,14 +600,14 @@ void load3DProblem(const char *fname)
   // now construct constraints
   constraints.allocate(num_lbls, num_lbls);
   constraints.fill(0);
-  ForArray3D(grid, i, j, k) {
+  ForArray3D(grid, i, j, k) {   // for each voxel in the example
     int id = pal2id[grid.at(i,j,k)];
-    ForIndex(n, 6) {
+    ForIndex(n, 6) {            // for each neighbor of that voxel
       int lbl = grid.at<Wrap>(i + neighs[n][0], j + neighs[n][1], k + neighs[n][2]);
       sl_assert(pal2id.find(lbl) != pal2id.end());
       int neigh_id = pal2id[lbl];
       if (side[n]) {
-        constraints.at(id, neigh_id) |= face[n];
+        constraints.at(id, neigh_id) |= face[n];    // add constraints to pair
       } else {
         constraints.at(neigh_id, id) |= face[n];
       }
@@ -737,15 +775,37 @@ void solve3D()
   Array3D<Presence> S;
   S.allocate(sz, sz, sz);
 
-  //// init as empty 
-  if (pal2id.find(254) != pal2id.end()) {
-    // ground is being used
-    init_global_empty(S, pal2id[255], pal2id[254]);
+  /*-----------------------------------------------------------------------*/
+  // Reserved labels:
+  // 255 --> empty
+  // 254 --> ground
+  // 253 --> object
+  // 252 --> contact
+  if (use_scene) {
+    // load the scene
+    string scenepath = string(SRC_PATH "/exemplars/") + scene + ".slab.vox";
+    Array3D<uchar> scenegrid;
+    Array<v3b> scenepalette;
+
+    loadFromVox(scenepath.c_str(), scenegrid, scenepalette);
+
+    // ForArray3D(scenegrid, i, j, k) {
+    //   std::cout << i << " " << j << " " << k << ";\t" << (int) scenegrid.at(i, j, k) << "\n";
+    // }
+
+    init_global_scene(S, scenegrid);
+    saveAsVox(SRC_PATH "/results/init.slab.vox", S);
   } else {
-    // no ground: use an empty border along all faces
-    init_global_empty(S, pal2id[255]);
+  /*-----------------------------------------------------------------------*/
+    //// init as empty 
+    if (pal2id.find(254) != pal2id.end()) {
+      // ground is being used
+      init_global_empty(S, pal2id[255], pal2id[254]);
+    } else {
+      // no ground: use an empty border along all faces
+      init_global_empty(S, pal2id[255]);
+    }
   }
-  
   //// synthesize subsets
   int num_failed    = 0;
   int num_success   = 0;
@@ -767,15 +827,16 @@ void solve3D()
       Array3D<Presence> backup = S;
       // try reseting the subdomain (may fail)
       int num_solids_before = num_solids_sub(S, pal2id[255]/*empty*/, sub);
-      if (reinit_sub(S, pal2id[255], sub)) {
+      if (reinit_sub(S, pal2id[255], sub)) {    // resets subdomain AND propagates constraints
         // try synthesizing (may fail)
         int num_solids;
         if (synthesize(S, pal2id[255]/*empty*/, num_solids, sub)) {
           if (num_solids >= num_solids_before) { // only accept if less (or eq) non empty appear
             num_success++;
           } else {
-            num_failed++;
-            S = backup;
+            num_success++;
+            // num_failed++;
+            // S = backup;
           }
         } else {
           // synthesis failed: retry
