@@ -76,14 +76,15 @@ using namespace std;
 // --------------------------------------------------------------
 
 // volume size to synthesize (sz^3)
-const int   sz = 16;
+const int   sz = 32;
+
+bool use_scene = true;
 
 // name of the problem (files in subdirectory exemplars/)
-string problem = "test";
+string problem = use_scene ? "test-scene" : "test";
 
 // name of the initial scene (object + contact points)
-bool use_scene = true;
-string scene = "scene";
+string scene = "scene-32";
 
 // synthesize a periodic structure? (only makes sense if not using borders!)
 const bool  periodic = false;
@@ -100,12 +101,12 @@ const uchar    axis_z = 4;
 
 // for navigating neighbors
 const v3i      neighs[6] = { v3i(-1, 0, 0), v3i(1, 0, 0), v3i(0, -1, 0), v3i(0, 1, 0), v3i(0, 0, -1), v3i(0, 0, 1) };
-const bool     side[6] = { true, false, true, false, true, false };
+const bool     side[6] = { false, true, false, true, false, true };
 const uchar    face[6] = { axis_x, axis_x, axis_y, axis_y, axis_z, axis_z };
 const int      n_left = 0;
 const int      n_right = 1;
-const int      n_front = 2;
-const int      n_back = 3;
+const int      n_back = 2;
+const int      n_front = 3;
 const int      n_below = 4;
 const int      n_above = 5;
 
@@ -115,10 +116,10 @@ string dirToStr(int dir) {
     return "left";
   case n_right:
     return "right";
-  case n_front:
-    return "front";
   case n_back:
     return "back";
+  case n_front:
+    return "front";
   case n_below:
     return "below";
   case n_above:
@@ -155,7 +156,7 @@ void prepareFastConstraintChecks()
       bool allowed = false;
       ForIndex(l2, num_lbls) {
         int a = l1; int b = l2;
-        if (side[n]) { std::swap(a, b); }
+        if (!side[n]) { std::swap(a, b); }
         bool can_be_side_by_side = (constraints.at(a, b) & face[n]);
         if (can_be_side_by_side) {
           allowed_by_side[n][l1].push_back(l2);
@@ -172,12 +173,12 @@ inline int oppositeNeighbor(int n)
 {
   switch (n)
   {
-  case n_left:   return n_right; break;
-  case n_right:  return n_left; break;
-  case n_front:    return n_back;  break;
-  case n_back: return n_front; break;
-  case n_below:  return n_above;  break;
-  case n_above:  return n_below; break;
+  case n_left:  return n_right; break;
+  case n_right: return n_left;  break;
+  case n_back:  return n_front; break;
+  case n_front: return n_back;  break;
+  case n_below: return n_above; break;
+  case n_above: return n_below; break;
   }
   return -1;
 }
@@ -209,7 +210,7 @@ public:
 ostream& operator<<(ostream& os, const Presence& p) {
   string sep = ", ";
   ForIndex(lbl, num_lbls) {
-    if (p[lbl]) std::cout << lbl << sep;
+    if (p[lbl]) std::cout << id2pal[lbl] + 1 << sep;
   }
   return os;
 }
@@ -307,6 +308,7 @@ bool propagateConstraints(int i, int j, int k, Array3D<Presence>& _S)
         q.push(ne); // changed: add to sites to process
       }
       if (failed) {
+        std::cout << "Failed: (" << i << ",\t" << j << ",\t" << k << ",\t" << n << ")\n";
         return false; // constraints disagree, fail
       }
     }
@@ -403,44 +405,64 @@ bool init_only_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
 // Start from soup, add scene constraints, propagate
 bool init_global_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
   bool ok = true;
-  ForArray3D(S, i, j, k) {
-    S.at(i, j, k).fill(false);
 
+  ForArray3D(S, i, j, k) {
+    S.at(i, j, k).fill(true); // soup
+    // S.at(i, j, k).set(pal2id[ID_OBJECT], false);
+    // S.at(i, j, k).set(pal2id[ID_CONTACT], false);
+    // S.at(i, j, k).set(pal2id[ID_GROUND], false);
+  }
+
+  ForArray3D(S, i, j, k) {
     switch((int) scene.at(i, j, k)) {
       case ID_OBJECT:
+        S.at(i, j, k).fill(false);
         S.at(i, j, k).set(pal2id[ID_OBJECT], true);
+        ok &= propagateConstraints(i, j, k, S);
         break;
       case ID_CONTACT:
+        S.at(i, j, k).fill(false);
         S.at(i, j, k).set(pal2id[ID_CONTACT], true);
+        ok &= propagateConstraints(i, j, k, S);
         break;
       case ID_GROUND:
+        S.at(i, j, k).fill(false);
         S.at(i, j, k).set(pal2id[ID_GROUND], true);
+        ok &= propagateConstraints(i, j, k, S);
         break;
       default:
-        S.at(i, j, k).fill(true); // soup
-        S.at(i, j, k).set(pal2id[ID_OBJECT], false);
-        S.at(i, j, k).set(pal2id[ID_CONTACT], false);
-        S.at(i, j, k).set(pal2id[ID_GROUND], false);
+        if (i == 0 || i == sz - 1 ||
+            j == 0 || j == sz - 1) {
+          S.at(i, j, k).fill(false);
+          S.at(i, j, k).set(pal2id[ID_EMPTY], true);
+          //ok &= propagateConstraints(i, j, k, S);
+        } else {
+          S.at(i, j, k).set(pal2id[ID_OBJECT], false);
+          S.at(i, j, k).set(pal2id[ID_CONTACT], false);
+          S.at(i, j, k).set(pal2id[ID_GROUND], false);
+        }
+        break;
     }
-
-    // ok &= propagateConstraints(i, j, k, S);
   }
 
-  ForArray3D(S, i, j, k) {
-    //std::cout << "(" << i << ", " << j << ", " << k << "):\t" << S.at(i, j, k) << "\n";
-    ok &= propagateConstraints(i, j, k, S);
-    // if (isFalse(S.at(i, j, k))) {
-    //   std::cout << "isFalse(" << i << ", " << j << ", " << k << ")\n";
-    // }
-  }
+  // ForArray3D(S, i, j, k) {
+  //   ok &= propagateConstraints(i, j, k, S);
+  // }
 
-  //ok &= propagateConstraints(10, 4, 1, S);
+  //ok &= propagateConstraints(0, 0, 0, S);
+
+  // ok &= propagateConstraints(13, 0, 14, S);
+  // ok &= propagateConstraints(2, 3, 14, S);
+  // ok &= propagateConstraints(9, 6, 14, S);
+  // ok &= propagateConstraints(5, 9, 14, S);
+  // ok &= propagateConstraints(15, 9, 14, S);
+  // ok &= propagateConstraints(10, 11, 14, S);
 
   ForArray3D(S, i, j, k) {
     std::cout << "(" << i << ", " << j << ", " << k << "):\t" << S.at(i, j, k) << "\n";
   }
 
-  return false;
+  return ok;
 }
 
 /* -------------------------------------------------------- */
@@ -639,7 +661,8 @@ void loadFromVox(const char *fname,Array3D<uchar>& _voxels,Array<v3b>& _palette)
   fread(&sz, 4, 1, f);
   _voxels.allocate(sx, sy, sz);
   ForIndex(i, sx) { ForIndex(j, sy) { ForIndex(k, sz) {
-        fread(&_voxels.at(i, j, k), sizeof(uchar), 1, f);   // read voxel label
+        // j and k coordinates inverted to use MagicaVoxel's coord. system
+        fread(&_voxels.at(i, sy - 1 - j, sz - 1 - k), sizeof(uchar), 1, f);   // read voxel label
   } } }
   _palette.allocate(256);
   fread(_palette.raw(), sizeof(v3b), 256, f);   // read palette information
@@ -697,12 +720,14 @@ void load3DProblem(const char *fname)
 
   std::cout << "\nConstraint information (MVPal)\n";
   ForIndex(l1, num_lbls) {
+    std::cout << "\ncurr:\t" << (int) id2pal[l1] + 1 << "\t";
     ForIndex(n, 6) {
+      if (n != 0) std::cout << "\t\t";
+      std::cout << "side:\t" << dirToStr(n) << "\t" << "neig:\t";
       for(int l2 : allowed_by_side[n][l1]) {
-        std::cout << "curr:\t" << (int) id2pal[l1] + 1 << "\t"
-                  << "side:\t" << dirToStr(n) << "\t"
-                  << "neig:\t" << (int) id2pal[l2] + 1 << "\n";
+        std::cout << (int) id2pal[l2] + 1 << ", ";
       }
+      std::cout << "\n";
     }
   }
 
@@ -727,7 +752,8 @@ void saveAsVox(const char *fname,const Array3D<Presence>& S, Array<v3b>& _palett
       ForIndex(k, sz) {
         int id = -1;
         ForIndex(l, num_lbls) {
-          if (S.at(i, j, k)[l]) {
+          // j and k coordinates inverted to use MagicaVoxel's coord. system
+          if (S.at(i, sy - 1 - j, sz - 1 - k)[l]) {
             id = l;
             break;
           }
@@ -792,6 +818,8 @@ void solve3D()
       return;
     }
 
+    // return;
+
   } else {
   /*-----------------------------------------------------------------------*/
     //// init as empty 
@@ -809,7 +837,8 @@ void solve3D()
   int num_passes    = sz; // increases on larger domains.
   int num_sub_synth = 32; // will use twice that on ground level
   ForIndex(p, num_passes) {
-    ForIndex(n, p == 0 ? 2 * num_sub_synth : num_sub_synth) {
+    // ForIndex(n, p == 0 ? 2 * num_sub_synth : num_sub_synth) {
+    ForIndex(n, num_sub_synth) {
       // random size
       int subsz = min(15, 8 + (rand() % 9));
       // random location
@@ -821,6 +850,14 @@ void solve3D()
         rand() % (sz - subsz));
         //p == 0 ? 0 : rand() % (sz - subsz));
       sub.maxCorner() = sub.minCorner() + v3i(subsz, subsz, subsz);
+
+      // sub.maxCorner() = v3i(
+      //   subsz + (rand() % (sz - subsz)),
+      //   subsz + (rand() % (sz - subsz)),
+      //   //rand() % (sz - subsz));
+      //   p == 0 ? sz - 1 : (subsz + (rand() % (sz - subsz))));
+      // sub.minCorner() = sub.maxCorner() - v3i(subsz, subsz, subsz);
+
       // backup current
       Array3D<Presence> backup = S;
       // try reseting the subdomain (may fail)
@@ -865,10 +902,10 @@ void testLoadSave() {
 
   loadFromVox(scenepath.c_str(), scenegrid, scenepalette);
 
-  ForArray3D(scenegrid, i, j, k) {
-    if ((int) scenegrid.at(i, j, k) != ID_EMPTY)
-      std::cout << "(" << i << ", " << j << ", " << k << "):\t" << (int) scenegrid.at(i, j, k) << "\n";
-  }
+  // ForArray3D(scenegrid, i, j, k) {
+  //   if ((int) scenegrid.at(i, j, k) != ID_EMPTY)
+  //     std::cout << "(" << i << ", " << j << ", " << k << "):\t" << (int) scenegrid.at(i, j, k) << "\n";
+  // }
 
   set<uchar> labels;
   ForArray3D(scenegrid, i, j, k) {
