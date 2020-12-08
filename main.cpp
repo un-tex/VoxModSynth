@@ -64,6 +64,11 @@ THE SOFTWARE.
 #include <limits>
 #include <cstring>
 
+#define ID_EMPTY    255
+#define ID_GROUND   254
+#define ID_OBJECT   253
+#define ID_CONTACT  252
+
 // --------------------------------------------------------------
 
 using namespace std;
@@ -75,18 +80,10 @@ const int   sz = 16;
 
 // name of the problem (files in subdirectory exemplars/)
 string problem = "test";
-// string problem = "towers";
-// string problem = "simple";
-// string problem = "flat";
-// string problem = "blog6";
 
 // name of the initial scene (object + contact points)
-bool use_scene = false;
+bool use_scene = true;
 string scene = "scene";
-
-// name of the tilemap (files in subdirectory exemplars/)
-string tilemap = "castle";
-// string tilemap = ""; // none
 
 // synthesize a periodic structure? (only makes sense if not using borders!)
 const bool  periodic = false;
@@ -107,10 +104,31 @@ const bool     side[6] = { true, false, true, false, true, false };
 const uchar    face[6] = { axis_x, axis_x, axis_y, axis_y, axis_z, axis_z };
 const int      n_left = 0;
 const int      n_right = 1;
-const int      n_top = 2;
-const int      n_bottom = 3;
+const int      n_front = 2;
+const int      n_back = 3;
 const int      n_below = 4;
 const int      n_above = 5;
+
+string dirToStr(int dir) {
+  switch (dir) {
+  case n_left:
+    return "left";
+  case n_right:
+    return "right";
+  case n_front:
+    return "front";
+  case n_back:
+    return "back";
+  case n_below:
+    return "below";
+  case n_above:
+    return "above";  
+  default:
+    break;
+  }
+
+  return "";
+}
 
 // constraint bit-field for each label pairs
 // (e.g. constraints.at(2,5) = axis_x means label 2 can have 5 on its right)
@@ -156,8 +174,8 @@ inline int oppositeNeighbor(int n)
   {
   case n_left:   return n_right; break;
   case n_right:  return n_left; break;
-  case n_top:    return n_bottom;  break;
-  case n_bottom: return n_top; break;
+  case n_front:    return n_back;  break;
+  case n_back: return n_front; break;
   case n_below:  return n_above;  break;
   case n_above:  return n_below; break;
   }
@@ -185,7 +203,16 @@ public:
     else   { m_Values[n >> s_PowNumBits] &= ~(1 << (n & s_ModNumBits)); } 
   }
   void fill(bool b) { memset(m_Values, b ? 0xFF : 0x00, c_MaxLabelFields * sizeof(uint)); }
+  friend ostream& operator<<(ostream& os, const Presence& p);
 };
+
+ostream& operator<<(ostream& os, const Presence& p) {
+  string sep = ", ";
+  ForIndex(lbl, num_lbls) {
+    if (p[lbl]) std::cout << lbl << sep;
+  }
+  return os;
+}
 
 // --------------------------------------------------------------
 // Simple helper functions to manipulate Presence vectors
@@ -248,6 +275,7 @@ void updateConstraintsAtSite(int i, int j, int k, int n, Array3D<Presence>& _S, 
   // is the selection empty?
   if (isFalse(_S.at(i,j,k))) { // yes ...
     _failed = true;
+    //std::cout << "Failed:\t" << i << "\t" << j << "\t" << k << "\n"; 
   } else {
     _failed = false;
   }  
@@ -349,27 +377,70 @@ bool init_global_empty(Array3D<Presence>& S, int lbl_empty,int lbl_ground=-1)
   return true;
 }
 
-/* -------------------------------------------------------- */
+bool init_only_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
+  // ForArray3D(S, i, j, k) {
+  //   S.at(i, j, k).fill(false);
+  //   if ((int) scene.at(i, j, k) == ID_OBJECT) { // object
+  //     S.at(i, j, k).set(pal2id[ID_OBJECT], true);
+  //   } else if ((int) scene.at(i, j, k) == ID_CONTACT) { // contact
+  //     S.at(i, j, k).set(pal2id[ID_CONTACT], true);
+  //   } else {
+  //     S.at(i, j, k).set(pal2id[ID_EMPTY], true);
+  //   }
+  // }
 
+  ForArray3D(S, i, j, k) {
+    // int rev_k = sz - 1 - k;
+    S.at(i, j, k).fill(false);
+    int pal = (int) scene.at(i, j, k);
+    S.at(i, j, k).set(pal2id[pal], true);
+  }
+
+  return true;
+}
+
+/* -------------------------------------------------------- */
+// Start from soup, add scene constraints, propagate
 bool init_global_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
+  bool ok = true;
   ForArray3D(S, i, j, k) {
     S.at(i, j, k).fill(false);
-    if (k > 0) {
-      if ((int) scene.at(i, j, k) == 253) { // object
-        S.at(i, j, k).set(pal2id[253], true);
-        
-      } else if ((int) scene.at(i, j, k) == 252) { // contact
-        S.at(i, j, k).set(pal2id[252], true);
-        //std::cout << i << " " << j << " " << k << "\n";
-      } else { // empty
-        S.at(i, j, k).set(pal2id[255], true);
-      }
-    } else {  // ground
-      S.at(i, j, k).set(pal2id[254], true);
-      
+
+    switch((int) scene.at(i, j, k)) {
+      case ID_OBJECT:
+        S.at(i, j, k).set(pal2id[ID_OBJECT], true);
+        break;
+      case ID_CONTACT:
+        S.at(i, j, k).set(pal2id[ID_CONTACT], true);
+        break;
+      case ID_GROUND:
+        S.at(i, j, k).set(pal2id[ID_GROUND], true);
+        break;
+      default:
+        S.at(i, j, k).fill(true); // soup
+        S.at(i, j, k).set(pal2id[ID_OBJECT], false);
+        S.at(i, j, k).set(pal2id[ID_CONTACT], false);
+        S.at(i, j, k).set(pal2id[ID_GROUND], false);
     }
+
+    // ok &= propagateConstraints(i, j, k, S);
   }
-  return true;
+
+  ForArray3D(S, i, j, k) {
+    //std::cout << "(" << i << ", " << j << ", " << k << "):\t" << S.at(i, j, k) << "\n";
+    ok &= propagateConstraints(i, j, k, S);
+    // if (isFalse(S.at(i, j, k))) {
+    //   std::cout << "isFalse(" << i << ", " << j << ", " << k << ")\n";
+    // }
+  }
+
+  //ok &= propagateConstraints(10, 4, 1, S);
+
+  ForArray3D(S, i, j, k) {
+    std::cout << "(" << i << ", " << j << ", " << k << "):\t" << S.at(i, j, k) << "\n";
+  }
+
+  return false;
 }
 
 /* -------------------------------------------------------- */
@@ -388,10 +459,13 @@ bool reinit_sub(Array3D<Presence>& S, int lbl_empty, AAB<3, int> sub)
       ForRange(i, cri[0] + 1, cra[0] - 1) {
         /*----------------------------------------------------------*/
         if (use_scene) {
-          if (!S.at(i,j,k)[pal2id[253]] && !S.at(i,j,k)[pal2id[252]]) {
+          if (!S.at(i,j,k)[pal2id[ID_GROUND]] &&
+              !S.at(i,j,k)[pal2id[ID_OBJECT]] &&
+              !S.at(i,j,k)[pal2id[ID_CONTACT]]) {
             S.at(i, j, k).fill(true); // only original line in this section
-            S.at(i, j, k).set(pal2id[253], false);
-            S.at(i, j, k).set(pal2id[252], false);
+            S.at(i, j, k).set(pal2id[ID_GROUND], false);
+            S.at(i, j, k).set(pal2id[ID_OBJECT], false);
+            S.at(i, j, k).set(pal2id[ID_CONTACT], false);
           }
         } else {
           S.at(i, j, k).fill(true);
@@ -489,6 +563,7 @@ bool synthesize(
 
   // propagate until done or conflict
   v3i cur = starts;
+
   bool failed = false;
   while (!failed) {
     // for loop over the domain w/ random directions and starting points
@@ -581,6 +656,7 @@ void loadFromVox(const char *fname,Array3D<uchar>& _voxels,Array<v3b>& _palette)
 // See README.md for more details.
 void load3DProblem(const char *fname)
 {
+  std::cout << "Constraint file information\n\n";
   // read voxels
   Array3D<uchar> grid;
   loadFromVox(fname, grid, palette);
@@ -590,11 +666,14 @@ void load3DProblem(const char *fname)
     uchar lbl = grid.at(i, j, k);
     labels.insert(lbl);
   }
+
   num_lbls = (int)labels.size();    // # of different labels
+  std::cout << "MVPal to id conversion: num_lbls = " << num_lbls << "\n";
   int id = 0;
-  for (uchar l : labels) {    // unique id \in [0, num_lbls] for each label \in [0, 255]
+  for (uchar l : labels) {    // unique id \in [0, num_lbls] for each label \in [0, ID_EMPTY]
     pal2id[l] = id;
     id2pal[id] = l;
+    std::cout << "pal:\t" << (int) l + 1 << "\t<-->\tid:\t" << id << "\n"; 
     id++;
   }
   // now construct constraints
@@ -615,13 +694,25 @@ void load3DProblem(const char *fname)
   }
   // prepare table for faster constraint checks
   prepareFastConstraintChecks();
+
+  std::cout << "\nConstraint information (MVPal)\n";
+  ForIndex(l1, num_lbls) {
+    ForIndex(n, 6) {
+      for(int l2 : allowed_by_side[n][l1]) {
+        std::cout << "curr:\t" << (int) id2pal[l1] + 1 << "\t"
+                  << "side:\t" << dirToStr(n) << "\t"
+                  << "neig:\t" << (int) id2pal[l2] + 1 << "\n";
+      }
+    }
+  }
+
   // ready!
 }
 
 /* -------------------------------------------------------- */
 
 // Saves a voxel file (.slab.vox format, can be imported by MagicaVoxel)
-void saveAsVox(const char *fname,const Array3D<Presence>& S)
+void saveAsVox(const char *fname,const Array3D<Presence>& S, Array<v3b>& _palette)
 {
   FILE *f;
   f = fopen(fname, "wb");
@@ -632,7 +723,8 @@ void saveAsVox(const char *fname,const Array3D<Presence>& S)
   fwrite(&sz, 4, 1, f);
   ForIndex(i, sx) {
     ForIndex(j, sy) {
-      ForRangeReverse(k, sz-1, 0) {
+      //ForRangeReverse(k, sz-1, 0) {
+      ForIndex(k, sz) {
         int id = -1;
         ForIndex(l, num_lbls) {
           if (S.at(i, j, k)[l]) {
@@ -646,106 +738,7 @@ void saveAsVox(const char *fname,const Array3D<Presence>& S)
       }
     }
   }
-  fwrite(palette.raw(), sizeof(v3b), 256, f);
-  fclose(f);
-}
-
-/* -------------------------------------------------------- */
-
-// Saves a voxel file (.slab.vox format, can be imported by MagicaVoxel)
-// This function takes as input a low res and high res tile map. The low res
-// voxel grid locates detailed tiles in the high res grid. For instance,
-// if palette index 128 appears at (1,2,3) in low res, and the tile size is
-// 8x8x8, the detailed tile for palette index 128 is expected to be at 
-// (8,16,24) in the high res voxel grid.
-// It is expected the low res and high res grid sizes correspond exactly
-// through the tile size. If the low res grid is WxHxD and the tile size 
-// is 8x8x8 then the high res grid has to be 8Wx8Hx8D.
-void saveAsVoxDetailed(
-  const char *flow,
-  const char *fdetailed,
-  const char *fout,
-  const Array3D<Presence>& S)
-{
-  uchar solid_color = 246; // from MagicaVoxel default palette
-  // load high res voxels
-  Array3D<uchar> highres;
-  loadFromVox(fdetailed, highres, palette);
-  // get corresponding low res voxels
-  Array3D<uchar> lowres;
-  loadFromVox(flow, lowres, palette);
-  // find out detailed tiles
-  map<uchar, v3i > pal2pos;
-  int tx, ty, tz;
-  // tile size
-  tx = highres.xsize() / lowres.xsize();
-  ty = highres.ysize() / lowres.ysize();
-  tz = highres.zsize() / lowres.zsize();
-  std::cerr << "Tile size: " << tx << ',' << ty << ',' << tz << std::endl;
-  // find out detailed tiles: parse low res, check high res for details
-  ForIndex(i, lowres.xsize()) { ForIndex(j, lowres.ysize()) { ForIndex(k, lowres.zsize()) {
-    uchar pal = lowres.at(i, j, k);
-    if (pal < 255) {
-      // no detailed tile known?
-      if (pal2pos.find(pal) == pal2pos.end()) {
-        // check if details exists in high res voxels
-        bool has_details = false;
-        bool is_empty = true;
-        ForIndex(tk, tz) { ForIndex(tj, ty) { ForIndex(ti, tx) {
-              uchar v = highres.at(i * tx + tx - 1 - ti, j * ty + ty - 1 - tj, k * tz + tz - 1 - tk);
-              if (v == 255) {
-                has_details = true;
-              } else {
-                is_empty = false;
-              }
-        } } }
-        if (has_details && !is_empty) {
-          // ok!
-          pal2pos[pal] = v3i(i, j, k);
-        }
-      } // not known
-    } // lbl < 255
-  } } }
-  // output detailed version
-  FILE *f = fopen(fout, "wb");
-  sl_assert(f != NULL);
-  long sx = tx*S.xsize(), sy = ty*S.ysize(), sz = tz*S.zsize();
-  fwrite(&sx, 4, 1, f);
-  fwrite(&sy, 4, 1, f);
-  fwrite(&sz, 4, 1, f);
-  // build high res grid
-  Array3D<uchar> detailed;
-  detailed.allocate(sx, sy, sz);
-  detailed.fill(255);
-  ForIndex(k, S.zsize()) { ForIndex(j, S.ysize()) { ForIndex(i, S.xsize()) {
-    int id = -1;
-    ForIndex(l, num_lbls) {
-      if (S.at(i, j, k)[l]) {
-        id = l;
-        break;
-      }
-    }
-    sl_assert(id > -1);
-    uchar lbl = id2pal[id];
-    if (lbl < 255) {
-      // output high res tile
-      if (pal2pos.find(lbl) != pal2pos.end()) {
-        v3i pos = pal2pos[lbl];
-        ForIndex(tk, tz) { ForIndex(tj, ty) { ForIndex(ti, tx) {
-              detailed.at(i*tx + ti, j*ty + tj, k*tz + tk)
-                = (highres.at(pos[0] * tx + tx - 1 - ti, pos[1] * ty + ty - 1 - tj, pos[2] * tz + tz - 1 - tk) != 255 ? solid_color : 255);
-        } } }
-      } else {
-        ForIndex(tk, tz) { ForIndex(tj, ty) { ForIndex(ti, tx) {
-              detailed.at(i*tx + ti, j*ty + tj, k*tz + tk) = solid_color;
-        } } }
-      }
-    }
-  } } }
-  ForIndex(i, sx) { ForIndex(j, sy) { ForRangeReverse(k, sz - 1, 0) {
-        fwrite(&detailed.at(i, j, k), sizeof(uchar), 1, f);
-  } } }
-  fwrite(palette.raw(), sizeof(v3b), 256, f);
+  fwrite(_palette.raw(), sizeof(v3b), 256, f);
   fclose(f);
 }
 
@@ -781,6 +774,7 @@ void solve3D()
   // 254 --> ground
   // 253 --> object
   // 252 --> contact
+
   if (use_scene) {
     // load the scene
     string scenepath = string(SRC_PATH "/exemplars/") + scene + ".slab.vox";
@@ -793,17 +787,20 @@ void solve3D()
     //   std::cout << i << " " << j << " " << k << ";\t" << (int) scenegrid.at(i, j, k) << "\n";
     // }
 
-    init_global_scene(S, scenegrid);
-    saveAsVox(SRC_PATH "/results/init.slab.vox", S);
+    if (!init_global_scene(S, scenegrid)) {
+      std::cout << "Unstable initial state...\n";
+      return;
+    }
+
   } else {
   /*-----------------------------------------------------------------------*/
     //// init as empty 
-    if (pal2id.find(254) != pal2id.end()) {
+    if (pal2id.find(ID_GROUND) != pal2id.end()) {
       // ground is being used
-      init_global_empty(S, pal2id[255], pal2id[254]);
+      init_global_empty(S, pal2id[ID_EMPTY], pal2id[ID_GROUND]);
     } else {
       // no ground: use an empty border along all faces
-      init_global_empty(S, pal2id[255]);
+      init_global_empty(S, pal2id[ID_EMPTY]);
     }
   }
   //// synthesize subsets
@@ -821,16 +818,17 @@ void solve3D()
       sub.minCorner() = v3i(
         rand() % (sz - subsz),
         rand() % (sz - subsz),
-        p == 0 ? 0 : rand() % (sz - subsz));
+        rand() % (sz - subsz));
+        //p == 0 ? 0 : rand() % (sz - subsz));
       sub.maxCorner() = sub.minCorner() + v3i(subsz, subsz, subsz);
       // backup current
       Array3D<Presence> backup = S;
       // try reseting the subdomain (may fail)
-      int num_solids_before = num_solids_sub(S, pal2id[255]/*empty*/, sub);
-      if (reinit_sub(S, pal2id[255], sub)) {    // resets subdomain AND propagates constraints
+      int num_solids_before = num_solids_sub(S, pal2id[ID_EMPTY]/*empty*/, sub);
+      if (reinit_sub(S, pal2id[ID_EMPTY], sub)) {    // resets subdomain AND propagates constraints
         // try synthesizing (may fail)
         int num_solids;
-        if (synthesize(S, pal2id[255]/*empty*/, num_solids, sub)) {
+        if (synthesize(S, pal2id[ID_EMPTY]/*empty*/, num_solids, sub)) {
           if (num_solids >= num_solids_before) { // only accept if less (or eq) non empty appear
             num_success++;
           } else {
@@ -855,18 +853,42 @@ void solve3D()
   }
 
   // output final
-  saveAsVox(SRC_PATH "/results/synthesized.slab.vox", S);
-  // output detailed if a tilemap exists
-  string low = (string(SRC_PATH "/exemplars/") + tilemap + ".slab.vox");
-  string detailed = (string(SRC_PATH "/exemplars/") + tilemap + "_detailed.slab.vox");
-  if (LibSL::System::File::exists(detailed.c_str())) {
-    saveAsVoxDetailed(
-      low.c_str(),
-      detailed.c_str(),
-      SRC_PATH "/results/synthesized_detailed.slab.vox",
-      S);
+  saveAsVox(SRC_PATH "/results/synthesized.slab.vox", S, palette);
+}
+
+/* -------------------------------------------------------- */
+
+void testLoadSave() {
+  string scenepath = string(SRC_PATH "/exemplars/") + scene + ".slab.vox";
+  Array3D<uchar> scenegrid;
+  Array<v3b> scenepalette;
+
+  loadFromVox(scenepath.c_str(), scenegrid, scenepalette);
+
+  ForArray3D(scenegrid, i, j, k) {
+    if ((int) scenegrid.at(i, j, k) != ID_EMPTY)
+      std::cout << "(" << i << ", " << j << ", " << k << "):\t" << (int) scenegrid.at(i, j, k) << "\n";
   }
 
+  set<uchar> labels;
+  ForArray3D(scenegrid, i, j, k) {
+    uchar lbl = scenegrid.at(i, j, k);
+    labels.insert(lbl);
+  }
+  num_lbls = (int)labels.size();    // # of different labels
+  int id = 0;
+  for (uchar l : labels) {    // unique id \in [0, num_lbls] for each label \in [0, ID_EMPTY]
+    std::cout << (int) l << std::endl;
+    pal2id[l] = id;
+    id2pal[id] = l;
+    id++;
+  }
+
+  Array3D<Presence> S;
+  S.allocate(sz, sz, sz);
+  init_only_scene(S, scenegrid);
+  
+  saveAsVox(SRC_PATH "/results/init.slab.vox", S, scenepalette);
 }
 
 /* -------------------------------------------------------- */
@@ -882,6 +904,7 @@ int main(int argc, char **argv)
     // let's synthesize!
     std::cerr << Console::white << "Synthesizing a voxel model!" << Console::gray << std::endl << std::endl;
     solve3D();
+    //testLoadSave();
 
   } catch (Fatal& e) {
     std::cerr << Console::red << e.message() << Console::gray << std::endl;
