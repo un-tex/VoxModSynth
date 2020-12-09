@@ -69,6 +69,8 @@ THE SOFTWARE.
 #define ID_OBJECT   253
 #define ID_CONTACT  252
 
+#define NUM_SUB_SYNTH 64
+
 // --------------------------------------------------------------
 
 using namespace std;
@@ -84,7 +86,8 @@ bool use_scene = true;
 string problem = use_scene ? "test-scene" : "test";
 
 // name of the initial scene (object + contact points)
-string scene = "scene-32";
+//string scene = "scene-" + to_string(sz);
+string scene = "scene-32-ball";
 
 // synthesize a periodic structure? (only makes sense if not using borders!)
 const bool  periodic = false;
@@ -308,7 +311,7 @@ bool propagateConstraints(int i, int j, int k, Array3D<Presence>& _S)
         q.push(ne); // changed: add to sites to process
       }
       if (failed) {
-        std::cout << "Failed: (" << i << ",\t" << j << ",\t" << k << ",\t" << n << ")\n";
+        //std::cout << "Failed: (" << i << ",\t" << j << ",\t" << k << ",\t" << n << ")\n";
         return false; // constraints disagree, fail
       }
     }
@@ -435,7 +438,7 @@ bool init_global_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
             j == 0 || j == sz - 1) {
           S.at(i, j, k).fill(false);
           S.at(i, j, k).set(pal2id[ID_EMPTY], true);
-          //ok &= propagateConstraints(i, j, k, S);
+          ok &= propagateConstraints(i, j, k, S);
         } else {
           S.at(i, j, k).set(pal2id[ID_OBJECT], false);
           S.at(i, j, k).set(pal2id[ID_CONTACT], false);
@@ -835,7 +838,7 @@ void solve3D()
   int num_failed    = 0;
   int num_success   = 0;
   int num_passes    = sz; // increases on larger domains.
-  int num_sub_synth = 32; // will use twice that on ground level
+  int num_sub_synth = NUM_SUB_SYNTH; // will use twice that on ground level
   ForIndex(p, num_passes) {
     // ForIndex(n, p == 0 ? 2 * num_sub_synth : num_sub_synth) {
     ForIndex(n, num_sub_synth) {
