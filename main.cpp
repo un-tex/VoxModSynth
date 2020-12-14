@@ -69,7 +69,7 @@ THE SOFTWARE.
 #define ID_OBJECT   253
 #define ID_CONTACT  252
 
-#define NUM_SUB_SYNTH 64
+#define NUM_SUB_SYNTH 8
 
 // --------------------------------------------------------------
 
@@ -83,11 +83,11 @@ const int   sz = 32;
 bool use_scene = true;
 
 // name of the problem (files in subdirectory exemplars/)
-string problem = use_scene ? "test-scene" : "test";
+string problem = "test-scene-plus";//use_scene ? "test-scene" : "test";
 
 // name of the initial scene (object + contact points)
 //string scene = "scene-" + to_string(sz);
-string scene = "scene-32-ball";
+string scene = "scene-32-sa";
 
 // synthesize a periodic structure? (only makes sense if not using borders!)
 const bool  periodic = false;
@@ -474,7 +474,7 @@ bool init_global_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
 // constraints are propagated inside.
 // Returns true on success, false otherwise (i.e. constraints cannot be resolved).
 // The domain is changed, even on failure. Caller is responsible for restoring it.
-bool reinit_sub(Array3D<Presence>& S, int lbl_empty, AAB<3, int> sub)
+bool reinit_sub(Array3D<Presence>& S, AAB<3, int> sub)
 {
   // init: reset subset, propagate constraints from borders
   v3i cri = sub.minCorner();
@@ -537,6 +537,18 @@ int num_solids_sub(Array3D<Presence>& S, int lbl_empty, AAB<3, int> sub)
   return num;
 }
 
+int num_solids_dom(Array3D<Presence>& S, int lbl_empty) {
+  int num = 0;
+  ForRange(k, 0, sz - 1) {
+    ForRange(j,  0, sz - 1) {
+      ForRange(i, 0, sz - 1) {
+        if (!S.at(i, j, k)[lbl_empty]) num++;
+      }
+    }
+  }
+  return num;
+}
+
 /* -------------------------------------------------------- */
 
 // Main synthesis function
@@ -547,7 +559,7 @@ int num_solids_sub(Array3D<Presence>& S, int lbl_empty, AAB<3, int> sub)
 // After a success _num_solids contains the number of synthesized non empty labels.
 bool synthesize(
   Array3D<Presence>& S,
-  int lbl_empty, int& _num_solids,
+  //int lbl_empty, int& _num_solids,
   AAB<3, int> sub = AAB<3, int>())
 {
   // buffer for choices
@@ -564,7 +576,7 @@ bool synthesize(
 
   // starting
   int num_choices = 0;
-  _num_solids = 0;
+  //_num_solids = 0;
 
   // randomize scanline order
   int order[] = { 0, 1, 2 };
@@ -625,9 +637,9 @@ bool synthesize(
     int c = choices[r];
     S.at(cur[0], cur[1], cur[2]).fill(false);
     S.at(cur[0], cur[1], cur[2]).set(c,true);
-    if (c != lbl_empty) {
-      _num_solids ++;
-    }
+    // if (c != lbl_empty) {
+    //   _num_solids ++;
+    // }
 
     // propagate this change
     bool ok = propagateConstraints(cur[0], cur[1], cur[2], S);
@@ -798,12 +810,6 @@ void solve3D()
   S.allocate(sz, sz, sz);
 
   /*-----------------------------------------------------------------------*/
-  // Reserved labels:
-  // 255 --> empty
-  // 254 --> ground
-  // 253 --> object
-  // 252 --> contact
-
   if (use_scene) {
     // load the scene
     string scenepath = string(SRC_PATH "/exemplars/") + scene + ".slab.vox";
@@ -812,17 +818,10 @@ void solve3D()
 
     loadFromVox(scenepath.c_str(), scenegrid, scenepalette);
 
-    // ForArray3D(scenegrid, i, j, k) {
-    //   std::cout << i << " " << j << " " << k << ";\t" << (int) scenegrid.at(i, j, k) << "\n";
-    // }
-
     if (!init_global_scene(S, scenegrid)) {
       std::cout << "Unstable initial state...\n";
       return;
     }
-
-    // return;
-
   } else {
   /*-----------------------------------------------------------------------*/
     //// init as empty 
@@ -837,49 +836,56 @@ void solve3D()
   //// synthesize subsets
   int num_failed    = 0;
   int num_success   = 0;
-  int num_passes    = sz; // increases on larger domains.
-  int num_sub_synth = NUM_SUB_SYNTH; // will use twice that on ground level
-  ForIndex(p, num_passes) {
-    // ForIndex(n, p == 0 ? 2 * num_sub_synth : num_sub_synth) {
-    ForIndex(n, num_sub_synth) {
-      // random size
-      int subsz = min(15, 8 + (rand() % 9));
-      // random location
-      // (forces the first pass to be on the ground, as many problems have ground constraints)
-      AAB<3, int> sub;
-      sub.minCorner() = v3i(
-        rand() % (sz - subsz),
-        rand() % (sz - subsz),
-        rand() % (sz - subsz));
-        //p == 0 ? 0 : rand() % (sz - subsz));
-      sub.maxCorner() = sub.minCorner() + v3i(subsz, subsz, subsz);
+  int num_passes    = sz;
+  int num_sub_synth = NUM_SUB_SYNTH;
 
-      // sub.maxCorner() = v3i(
-      //   subsz + (rand() % (sz - subsz)),
-      //   subsz + (rand() % (sz - subsz)),
-      //   //rand() % (sz - subsz));
-      //   p == 0 ? sz - 1 : (subsz + (rand() % (sz - subsz))));
-      // sub.minCorner() = sub.maxCorner() - v3i(subsz, subsz, subsz);
+  ForIndex(p, num_passes) {
+    ForIndex(n, num_sub_synth) {
+      int subsz = min(15, 8 + (rand() % 9)); // random size \in [8, 15]
+      AAB<3, int> sub;
+      // Full domain
+      if (p == 0) {
+        sub.minCorner() = v3i(0, 0, 0);
+        sub.maxCorner() = v3i(sz-1, sz-1, sz-1);
+      } else {
+        // Vertical slice
+        sub.minCorner() = v3i(
+          rand() % (sz - subsz),
+          rand() % (sz - subsz),
+          0);
+        sub.maxCorner() = sub.minCorner() + v3i(subsz, subsz, sz - 1);
+      }
+
+      // Random block anywhere
+      // sub.minCorner() = v3i(
+      //   rand() % (sz - subsz),
+      //   rand() % (sz - subsz),
+      //   rand() % (sz - subsz));
+      //   //p == 0 ? 0 : rand() % (sz - subsz));
+      // sub.maxCorner() = sub.minCorner() + v3i(subsz, subsz, subsz);
+
+      // std::cout << "block: (" << sub.minCorner()[0] << ", " << sub.minCorner()[1] << ", " << sub.minCorner()[2] << ")\t-->\t(" <<
+      //                            sub.maxCorner()[0] << ", " << sub.maxCorner()[1] << ", " << sub.maxCorner()[2] << ")\n";
 
       // backup current
       Array3D<Presence> backup = S;
-      // try reseting the subdomain (may fail)
-      int num_solids_before = num_solids_sub(S, pal2id[ID_EMPTY]/*empty*/, sub);
-      if (reinit_sub(S, pal2id[ID_EMPTY], sub)) {    // resets subdomain AND propagates constraints
-        // try synthesizing (may fail)
-        int num_solids;
-        if (synthesize(S, pal2id[ID_EMPTY]/*empty*/, num_solids, sub)) {
-          if (num_solids >= num_solids_before) { // only accept if less (or eq) non empty appear
-            num_success++;
-          } else {
-            num_success++;
-            // num_failed++;
-            // S = backup;
-          }
-        } else {
+      //int num_solids_before = num_solids_dom(S, pal2id[ID_EMPTY]);
+
+      if (reinit_sub(S, sub)) { // resets subdomain AND propagates constraints
+        if (!synthesize(S, sub)) { // try synthesizing (may fail)
           // synthesis failed: retry
           num_failed++;
           S = backup;
+        } else {
+          // int num_solids = num_solids_dom(S, pal2id[ID_EMPTY]/*empty*/);
+          // if (p > 0 && num_solids >= num_solids_before) {
+          //   num_failed++;
+          //   S = backup;
+          // } else {
+          //   num_success++;
+          //   std::cout << "success [" << num_solids << "]\n";
+          // }
+          num_success++;
         }
       } else {
         // reinit failed: cannot work here 
@@ -887,6 +893,7 @@ void solve3D()
         S = backup;
       }
     }
+    //if (p==0) saveAsVox(SRC_PATH "/results/synthesized-ini.slab.vox", S, palette);
     // display progress
     Console::cursorGotoPreviousLineStart();
     std::cerr << sprint("attempt %3d / %3d, failures: %3d, successes: %3d\n", (p+1) * num_sub_synth, num_sub_synth*num_passes, num_failed, num_success);
@@ -898,53 +905,135 @@ void solve3D()
 
 /* -------------------------------------------------------- */
 
-void testLoadSave() {
+double next_temperature(double temp, double alpha) {
+  return alpha * temp;
+}
+
+double acceptance(int curr, int prev, double temp) {
+  int gain = curr - prev; // sol improves if gain < 0
+  if (gain >= 0) {
+    return exp(- ((double)gain) / temp);
+  }
+
+  return 1.0;
+}
+
+void simulated_annealing(double init_temp, double alpha,
+                         int steps, int substeps) {
+  Timer tm("simAnnealing");
+
+  string fullpath = string(SRC_PATH "/exemplars/") + problem + ".slab.vox";
+
+  //// setup a 3D problem
+  load3DProblem(fullpath.c_str());
+
+  // array being synthesized
+  Array3D<Presence> S;
+  S.allocate(sz, sz, sz);
+
+  // load the scene
   string scenepath = string(SRC_PATH "/exemplars/") + scene + ".slab.vox";
   Array3D<uchar> scenegrid;
   Array<v3b> scenepalette;
 
   loadFromVox(scenepath.c_str(), scenegrid, scenepalette);
 
-  // ForArray3D(scenegrid, i, j, k) {
-  //   if ((int) scenegrid.at(i, j, k) != ID_EMPTY)
-  //     std::cout << "(" << i << ", " << j << ", " << k << "):\t" << (int) scenegrid.at(i, j, k) << "\n";
-  // }
-
-  set<uchar> labels;
-  ForArray3D(scenegrid, i, j, k) {
-    uchar lbl = scenegrid.at(i, j, k);
-    labels.insert(lbl);
-  }
-  num_lbls = (int)labels.size();    // # of different labels
-  int id = 0;
-  for (uchar l : labels) {    // unique id \in [0, num_lbls] for each label \in [0, ID_EMPTY]
-    std::cout << (int) l << std::endl;
-    pal2id[l] = id;
-    id2pal[id] = l;
-    id++;
+  if (!init_global_scene(S, scenegrid)) {
+    std::cerr << "Unstable initial state...\n";
+    return;
   }
 
-  Array3D<Presence> S;
-  S.allocate(sz, sz, sz);
-  init_only_scene(S, scenegrid);
-  
-  saveAsVox(SRC_PATH "/results/init.slab.vox", S, scenepalette);
+  Array3D<Presence> backup = S;
+  int init_tries = 1;
+
+  while (!synthesize(S)) {
+    S = backup;
+    init_tries++;
+  }
+
+  // saveAsVox(SRC_PATH "/results/synthesized-sa.slab.vox", S, palette);
+  // return;
+
+  int non_empty_prev = num_solids_dom(S, pal2id[ID_EMPTY]);
+  int non_empty_curr = non_empty_prev;
+  std::cout << "init_tries:\t" << init_tries << ";\t#NE:\t" << non_empty_curr << "\n";
+  int num_steps = steps;
+  int num_substeps = substeps;
+  double temperature = init_temp;
+
+  ForIndex(k, num_steps) {
+    // cooling
+    if (k > 0) temperature = next_temperature(temperature, alpha);
+    backup = S;
+
+    std::cout << "step " << k + 1 << ";\ttemp: " << temperature << ";\t";
+
+    bool success = false;
+    ForIndex(i, num_substeps) {
+      // new candidate
+      int subsz = min(15, 8 + (rand() % 9)); // random size \in [8, 15]
+      AAB<3, int> sub;
+      sub.minCorner() = v3i(
+        rand() % (sz - subsz),
+        rand() % (sz - subsz),
+        0);
+      sub.maxCorner() = sub.minCorner() + v3i(subsz, subsz, sz - 1);
+      // sub.minCorner() = v3i(0, 0, 0);
+      // sub.maxCorner() = v3i(sz-1, sz-1, sz-1);
+      // sub.minCorner() = v3i(
+      //   rand() % (sz - subsz),
+      //   rand() % (sz - subsz),
+      //   rand() % (sz - subsz));
+      // sub.maxCorner() = sub.minCorner() + v3i(subsz, subsz, subsz);
+
+      if (reinit_sub(S, sub)) { // resets subdomain AND propagates constraints
+        if (synthesize(S, sub)) {
+          success = true;
+          break;
+        } else {
+          S = backup;
+        }
+      } else { 
+        S = backup;
+      }
+    }    
+
+    if (success) {
+      non_empty_curr = num_solids_dom(S, pal2id[ID_EMPTY]);
+      double r = ((double) rand() / (RAND_MAX));
+      double accept_prob = acceptance(non_empty_curr, non_empty_prev, temperature);
+      if (accept_prob < r) {
+        S = backup; // revert
+        std::cout << "-\n";
+      } else { // accepted
+        non_empty_prev = non_empty_curr;
+        std::cout << "+ [" << non_empty_curr << "];\tP: " << accept_prob << "\n";
+      }
+    } else {
+      S = backup; // revert
+      std::cout << "x\n";
+    }
+  }
+
+  // output final
+  saveAsVox(SRC_PATH "/results/synthesized-sa.slab.vox", S, palette);
 }
 
-/* -------------------------------------------------------- */
+
 
 // This is where it all begins.
 int main(int argc, char **argv) 
 {
   try {
-
     // random seed
     srand((unsigned int)time(NULL));
     
     // let's synthesize!
     std::cerr << Console::white << "Synthesizing a voxel model!" << Console::gray << std::endl << std::endl;
-    solve3D();
-    //testLoadSave();
+    
+    //solve3D();
+
+    simulated_annealing(100, 0.98, 500, 5);
 
   } catch (Fatal& e) {
     std::cerr << Console::red << e.message() << Console::gray << std::endl;
