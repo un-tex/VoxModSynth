@@ -83,11 +83,11 @@ const int   sz = 32;
 bool use_scene = true;
 
 // name of the problem (files in subdirectory exemplars/)
-string problem = "test-scene-plus";//use_scene ? "test-scene" : "test";
+string problem = "str-scene-part";
 
 // name of the initial scene (object + contact points)
 //string scene = "scene-" + to_string(sz);
-string scene = "scene-32-sa";
+string scene = "scenes/scene-32-sa";
 
 // synthesize a periodic structure? (only makes sense if not using borders!)
 const bool  periodic = false;
@@ -905,6 +905,34 @@ void solve3D()
 
 /* -------------------------------------------------------- */
 
+// Function to minimize
+int fcost(Array3D<Presence> S) {
+  int id_T1 = pal2id[33];
+  int id_T2 = pal2id[34];
+  int id_T3 = pal2id[49];
+  int id_T4 = pal2id[50];
+
+  int id_L1 = pal2id[35];
+  int id_L2 = pal2id[36];
+  int id_L3 = pal2id[51];
+  int id_L4 = pal2id[52];
+
+  int cost = 0;
+
+  ForArray3D(S, i, j, k) {
+    if (S.at(i, j, k)[id_T1] || S.at(i, j, k)[id_T2] ||
+        S.at(i, j, k)[id_T3] || S.at(i, j, k)[id_T4]) {
+      --cost;
+    }
+    if (S.at(i, j, k)[id_L1] || S.at(i, j, k)[id_L2] ||
+        S.at(i, j, k)[id_L3] || S.at(i, j, k)[id_L4]) {
+      cost += 5;
+    }
+  }
+
+  return cost;
+}
+
 double next_temperature(double temp, double alpha) {
   return alpha * temp;
 }
@@ -918,7 +946,7 @@ double acceptance(int curr, int prev, double temp) {
   return 1.0;
 }
 
-void simulated_annealing(double init_temp, double alpha,
+void simulated_annealing(int num_init, double init_temp, double alpha,
                          int steps, int substeps) {
   Timer tm("simAnnealing");
 
@@ -944,19 +972,46 @@ void simulated_annealing(double init_temp, double alpha,
   }
 
   Array3D<Presence> backup = S;
-  int init_tries = 1;
+  Array3D<Presence> min_synth;
+  //int init_tries = 1;
+  int min_cost = 0;
+  int curr_cost = 0;
+  int prev_cost = 0;
 
-  while (!synthesize(S)) {
-    S = backup;
-    init_tries++;
+  ForIndex(i, num_init) {
+    // Find a successful initialization
+    while (!synthesize(S)) {
+      S = backup;
+    }
+
+    if (i == 0) {   // initialization on first iteration
+      min_cost = num_solids_dom(S, pal2id[ID_EMPTY]);
+      //min_cost = fcost(S);
+      curr_cost = min_cost;
+      min_synth = S;
+    } else {
+      curr_cost = num_solids_dom(S, pal2id[ID_EMPTY]);
+      //curr_cost = fcost(S);
+      if (curr_cost < min_cost) { // replace current solution with current if better
+        min_cost = curr_cost;
+        min_synth = S;
+      } else { // restart if worse
+        S = backup;
+      }
+    }
+
+    std::cout << "init\t" << i << "\t#NE " << curr_cost << "\n";
   }
 
-  // saveAsVox(SRC_PATH "/results/synthesized-sa.slab.vox", S, palette);
-  // return;
+  S = min_synth;
 
-  int non_empty_prev = num_solids_dom(S, pal2id[ID_EMPTY]);
-  int non_empty_curr = non_empty_prev;
-  std::cout << "init_tries:\t" << init_tries << ";\t#NE:\t" << non_empty_curr << "\n";
+  saveAsVox(SRC_PATH "/results/synthesized-init.slab.vox", S, palette);
+
+  prev_cost = num_solids_dom(S, pal2id[ID_EMPTY]);
+  //prev_cost = fcost(S);
+  curr_cost = prev_cost;
+  std::cout << "#init:\t" << num_init << ";\tcost:\t" << curr_cost << "\n";
+  
   int num_steps = steps;
   int num_substeps = substeps;
   double temperature = init_temp;
@@ -969,15 +1024,28 @@ void simulated_annealing(double init_temp, double alpha,
     std::cout << "step " << k + 1 << ";\ttemp: " << temperature << ";\t";
 
     bool success = false;
+    int width = 5;
     ForIndex(i, num_substeps) {
-      // new candidate
-      int subsz = min(15, 8 + (rand() % 9)); // random size \in [8, 15]
       AAB<3, int> sub;
-      sub.minCorner() = v3i(
-        rand() % (sz - subsz),
-        rand() % (sz - subsz),
-        0);
-      sub.maxCorner() = sub.minCorner() + v3i(subsz, subsz, sz - 1);
+      int r = rand() % 2;
+      int coord = rand() % (sz - width);
+      if (r == 0) {
+        sub.minCorner() = v3i(coord, 0, 0);
+        sub.maxCorner() = sub.minCorner() + v3i(width, sz - 1, sz - 1);
+      } else {
+        sub.minCorner() = v3i(0, coord, 0);
+        sub.maxCorner() = sub.minCorner() + v3i(sz - 1, width, sz - 1);
+      }
+      // std::cout << "(" << sub.minCorner()[0] << ", " << sub.minCorner()[1] << ", " << sub.minCorner()[2] << ")\t-->\t(" <<
+      //              "(" << sub.maxCorner()[0] << ", " << sub.maxCorner()[1] << ", " << sub.maxCorner()[2] << ")\n"; 
+
+      // new candidate
+      // int subsz = min(15, 8 + (rand() % 9)); // random size \in [8, 15]
+      // sub.minCorner() = v3i(
+      //   rand() % (sz - subsz),
+      //   rand() % (sz - subsz),
+      //   0);
+      // sub.maxCorner() = sub.minCorner() + v3i(subsz, subsz, sz - 1);
       // sub.minCorner() = v3i(0, 0, 0);
       // sub.maxCorner() = v3i(sz-1, sz-1, sz-1);
       // sub.minCorner() = v3i(
@@ -999,15 +1067,16 @@ void simulated_annealing(double init_temp, double alpha,
     }    
 
     if (success) {
-      non_empty_curr = num_solids_dom(S, pal2id[ID_EMPTY]);
+      curr_cost = num_solids_dom(S, pal2id[ID_EMPTY]);
+      //curr_cost = fcost(S);
       double r = ((double) rand() / (RAND_MAX));
-      double accept_prob = acceptance(non_empty_curr, non_empty_prev, temperature);
+      double accept_prob = acceptance(curr_cost, prev_cost, temperature);
       if (accept_prob < r) {
         S = backup; // revert
         std::cout << "-\n";
       } else { // accepted
-        non_empty_prev = non_empty_curr;
-        std::cout << "+ [" << non_empty_curr << "];\tP: " << accept_prob << "\n";
+        prev_cost = curr_cost;
+        std::cout << "+ [" << curr_cost << "];\tP: " << accept_prob << "\n";
       }
     } else {
       S = backup; // revert
@@ -1018,8 +1087,6 @@ void simulated_annealing(double init_temp, double alpha,
   // output final
   saveAsVox(SRC_PATH "/results/synthesized-sa.slab.vox", S, palette);
 }
-
-
 
 // This is where it all begins.
 int main(int argc, char **argv) 
@@ -1033,7 +1100,7 @@ int main(int argc, char **argv)
     
     //solve3D();
 
-    simulated_annealing(100, 0.98, 500, 5);
+    simulated_annealing(16, 100, 0.9, 200, 8);
 
   } catch (Fatal& e) {
     std::cerr << Console::red << e.message() << Console::gray << std::endl;
