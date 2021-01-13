@@ -67,30 +67,28 @@ THE SOFTWARE.
 #define ID_EMPTY    255
 #define ID_GROUND   254
 #define ID_OBJECT   253
-#define ID_CONTACT  252
+#define ID_ANCHOR   252
+
+#define ID_PILLAR   5
 
 #define NUM_SUB_SYNTH 8
+
+#define COST_FUNCTION(...) pillarCost(__VA_ARGS__)
 
 // --------------------------------------------------------------
 
 using namespace std;
 
 // --------------------------------------------------------------
+// GLOBAL VARIABLES
 
-// volume size to synthesize (sz^3)
-const int   sz = 32;
+int sz = 32;    // volume size to synthesize (sz^3)
+bool use_scene = true;  // start from an existing scene
 
-bool use_scene = true;
+string problem = "str-scene-part";  // name of the exemplar
+string scene   = "scene-32-sa";       // name of the scene
 
-// name of the problem (files in subdirectory exemplars/)
-string problem = "str-scene-part";
-
-// name of the initial scene (object + contact points)
-//string scene = "scene-" + to_string(sz);
-string scene = "scenes/scene-32-sa";
-
-// synthesize a periodic structure? (only makes sense if not using borders!)
-const bool  periodic = false;
+const bool periodic = false; //synthesize a periodic structure? (only makes sense if not using borders!)
 
 // --------------------------------------------------------------
 
@@ -103,12 +101,13 @@ const uchar    axis_y = 2;
 const uchar    axis_z = 4;
 
 // for navigating neighbors
-const v3i      neighs[6] = { v3i(-1, 0, 0), v3i(1, 0, 0), v3i(0, -1, 0), v3i(0, 1, 0), v3i(0, 0, -1), v3i(0, 0, 1) };
+const v3i      neighs[6] = { v3i(-1, 0, 0), v3i(1, 0,  0), v3i(0, -1, 0),
+                             v3i( 0, 1, 0), v3i(0, 0, -1), v3i(0,  0, 1) };
 const bool     side[6] = { false, true, false, true, false, true };
 const uchar    face[6] = { axis_x, axis_x, axis_y, axis_y, axis_z, axis_z };
-const int      n_left = 0;
+const int      n_left  = 0;
 const int      n_right = 1;
-const int      n_back = 2;
+const int      n_back  = 2;
 const int      n_front = 3;
 const int      n_below = 4;
 const int      n_above = 5;
@@ -387,8 +386,8 @@ bool init_only_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
   //   S.at(i, j, k).fill(false);
   //   if ((int) scene.at(i, j, k) == ID_OBJECT) { // object
   //     S.at(i, j, k).set(pal2id[ID_OBJECT], true);
-  //   } else if ((int) scene.at(i, j, k) == ID_CONTACT) { // contact
-  //     S.at(i, j, k).set(pal2id[ID_CONTACT], true);
+  //   } else if ((int) scene.at(i, j, k) == ID_ANCHOR) { // contact
+  //     S.at(i, j, k).set(pal2id[ID_ANCHOR], true);
   //   } else {
   //     S.at(i, j, k).set(pal2id[ID_EMPTY], true);
   //   }
@@ -412,7 +411,7 @@ bool init_global_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
   ForArray3D(S, i, j, k) {
     S.at(i, j, k).fill(true); // soup
     // S.at(i, j, k).set(pal2id[ID_OBJECT], false);
-    // S.at(i, j, k).set(pal2id[ID_CONTACT], false);
+    // S.at(i, j, k).set(pal2id[ID_ANCHOR], false);
     // S.at(i, j, k).set(pal2id[ID_GROUND], false);
   }
 
@@ -423,9 +422,9 @@ bool init_global_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
         S.at(i, j, k).set(pal2id[ID_OBJECT], true);
         ok &= propagateConstraints(i, j, k, S);
         break;
-      case ID_CONTACT:
+      case ID_ANCHOR:
         S.at(i, j, k).fill(false);
-        S.at(i, j, k).set(pal2id[ID_CONTACT], true);
+        S.at(i, j, k).set(pal2id[ID_ANCHOR], true);
         ok &= propagateConstraints(i, j, k, S);
         break;
       case ID_GROUND:
@@ -441,7 +440,7 @@ bool init_global_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
           ok &= propagateConstraints(i, j, k, S);
         } else {
           S.at(i, j, k).set(pal2id[ID_OBJECT], false);
-          S.at(i, j, k).set(pal2id[ID_CONTACT], false);
+          S.at(i, j, k).set(pal2id[ID_ANCHOR], false);
           S.at(i, j, k).set(pal2id[ID_GROUND], false);
         }
         break;
@@ -461,9 +460,10 @@ bool init_global_scene(Array3D<Presence>& S, Array3D<uchar>& scene) {
   // ok &= propagateConstraints(15, 9, 14, S);
   // ok &= propagateConstraints(10, 11, 14, S);
 
-  ForArray3D(S, i, j, k) {
-    std::cout << "(" << i << ", " << j << ", " << k << "):\t" << S.at(i, j, k) << "\n";
-  }
+  // [PRINT] Initial constraints
+  // ForArray3D(S, i, j, k) {
+  //   std::cout << "(" << i << ", " << j << ", " << k << "):\t" << S.at(i, j, k) << "\n";
+  // }
 
   return ok;
 }
@@ -486,11 +486,11 @@ bool reinit_sub(Array3D<Presence>& S, AAB<3, int> sub)
         if (use_scene) {
           if (!S.at(i,j,k)[pal2id[ID_GROUND]] &&
               !S.at(i,j,k)[pal2id[ID_OBJECT]] &&
-              !S.at(i,j,k)[pal2id[ID_CONTACT]]) {
+              !S.at(i,j,k)[pal2id[ID_ANCHOR]]) {
             S.at(i, j, k).fill(true); // only original line in this section
             S.at(i, j, k).set(pal2id[ID_GROUND], false);
             S.at(i, j, k).set(pal2id[ID_OBJECT], false);
-            S.at(i, j, k).set(pal2id[ID_CONTACT], false);
+            S.at(i, j, k).set(pal2id[ID_ANCHOR], false);
           }
         } else {
           S.at(i, j, k).fill(true);
@@ -705,6 +705,7 @@ void load3DProblem(const char *fname)
     labels.insert(lbl);
   }
 
+  // [PRINT] id to pal
   num_lbls = (int)labels.size();    // # of different labels
   std::cout << "MVPal to id conversion: num_lbls = " << num_lbls << "\n";
   int id = 0;
@@ -733,6 +734,7 @@ void load3DProblem(const char *fname)
   // prepare table for faster constraint checks
   prepareFastConstraintChecks();
 
+  // [PRINT] Constraint information
   std::cout << "\nConstraint information (MVPal)\n";
   ForIndex(l1, num_lbls) {
     std::cout << "\ncurr:\t" << (int) id2pal[l1] + 1 << "\t";
@@ -800,7 +802,7 @@ void solve3D()
 {
   Timer tm("solve3D");
 
-  string fullpath = string(SRC_PATH "/exemplars/") + problem + ".slab.vox";
+  string fullpath = string(SRC_PATH "/data/exemplars/") + problem + ".slab.vox";
 
   //// setup a 3D problem
   load3DProblem(fullpath.c_str());
@@ -812,7 +814,7 @@ void solve3D()
   /*-----------------------------------------------------------------------*/
   if (use_scene) {
     // load the scene
-    string scenepath = string(SRC_PATH "/exemplars/") + scene + ".slab.vox";
+    string scenepath = string(SRC_PATH "/data/exemplars/") + scene + ".slab.vox";
     Array3D<uchar> scenegrid;
     Array<v3b> scenepalette;
 
@@ -900,7 +902,7 @@ void solve3D()
   }
 
   // output final
-  saveAsVox(SRC_PATH "/results/synthesized.slab.vox", S, palette);
+  saveAsVox(SRC_PATH "/data/results/synthesized.slab.vox", S, palette);
 }
 
 /* -------------------------------------------------------- */
@@ -933,6 +935,19 @@ int fcost(Array3D<Presence> S) {
   return cost;
 }
 
+int pillarCost(Array3D<Presence> S) {
+  int cost = 0;
+  
+  ForArray3D(S, i, j, k) {
+    if (S.at(i, j, k)[pal2id[ID_PILLAR]] ||
+        S.at(i, j, k)[pal2id[1]] || S.at(i, j, k)[pal2id[2]] ||
+        S.at(i, j, k)[pal2id[3]] || S.at(i, j, k)[pal2id[4]]) cost++;
+    if (S.at(i, j, k)[pal2id[6]] || S.at(i, j, k)[pal2id[7]]) cost--;
+  }
+
+  return cost;
+}
+
 double next_temperature(double temp, double alpha) {
   return alpha * temp;
 }
@@ -950,7 +965,7 @@ void simulated_annealing(int num_init, double init_temp, double alpha,
                          int steps, int substeps) {
   Timer tm("simAnnealing");
 
-  string fullpath = string(SRC_PATH "/exemplars/") + problem + ".slab.vox";
+  string fullpath = string(SRC_PATH "/data/exemplars/") + problem + ".slab.vox";
 
   //// setup a 3D problem
   load3DProblem(fullpath.c_str());
@@ -960,7 +975,7 @@ void simulated_annealing(int num_init, double init_temp, double alpha,
   S.allocate(sz, sz, sz);
 
   // load the scene
-  string scenepath = string(SRC_PATH "/exemplars/") + scene + ".slab.vox";
+  string scenepath = string(SRC_PATH "/data/scenes/") + scene + ".slab.vox";
   Array3D<uchar> scenegrid;
   Array<v3b> scenepalette;
 
@@ -985,13 +1000,11 @@ void simulated_annealing(int num_init, double init_temp, double alpha,
     }
 
     if (i == 0) {   // initialization on first iteration
-      min_cost = num_solids_dom(S, pal2id[ID_EMPTY]);
-      //min_cost = fcost(S);
+      min_cost = COST_FUNCTION(S);
       curr_cost = min_cost;
       min_synth = S;
     } else {
-      curr_cost = num_solids_dom(S, pal2id[ID_EMPTY]);
-      //curr_cost = fcost(S);
+      curr_cost = COST_FUNCTION(S);
       if (curr_cost < min_cost) { // replace current solution with current if better
         min_cost = curr_cost;
         min_synth = S;
@@ -1005,10 +1018,9 @@ void simulated_annealing(int num_init, double init_temp, double alpha,
 
   S = min_synth;
 
-  saveAsVox(SRC_PATH "/results/synthesized-init.slab.vox", S, palette);
+  saveAsVox(SRC_PATH "/data/results/synthesized-init.slab.vox", S, palette);
 
-  prev_cost = num_solids_dom(S, pal2id[ID_EMPTY]);
-  //prev_cost = fcost(S);
+  prev_cost = COST_FUNCTION(S);
   curr_cost = prev_cost;
   std::cout << "#init:\t" << num_init << ";\tcost:\t" << curr_cost << "\n";
   
@@ -1036,10 +1048,11 @@ void simulated_annealing(int num_init, double init_temp, double alpha,
         sub.minCorner() = v3i(0, coord, 0);
         sub.maxCorner() = sub.minCorner() + v3i(sz - 1, width, sz - 1);
       }
-      // std::cout << "(" << sub.minCorner()[0] << ", " << sub.minCorner()[1] << ", " << sub.minCorner()[2] << ")\t-->\t(" <<
+
+	  // [PRINT] Resynthesize zone
+	  // std::cout << "(" << sub.minCorner()[0] << ", " << sub.minCorner()[1] << ", " << sub.minCorner()[2] << ")\t-->\t(" <<
       //              "(" << sub.maxCorner()[0] << ", " << sub.maxCorner()[1] << ", " << sub.maxCorner()[2] << ")\n"; 
 
-      // new candidate
       // int subsz = min(15, 8 + (rand() % 9)); // random size \in [8, 15]
       // sub.minCorner() = v3i(
       //   rand() % (sz - subsz),
@@ -1067,8 +1080,7 @@ void simulated_annealing(int num_init, double init_temp, double alpha,
     }    
 
     if (success) {
-      curr_cost = num_solids_dom(S, pal2id[ID_EMPTY]);
-      //curr_cost = fcost(S);
+      curr_cost = COST_FUNCTION(S);
       double r = ((double) rand() / (RAND_MAX));
       double accept_prob = acceptance(curr_cost, prev_cost, temperature);
       if (accept_prob < r) {
@@ -1085,22 +1097,41 @@ void simulated_annealing(int num_init, double init_temp, double alpha,
   }
 
   // output final
-  saveAsVox(SRC_PATH "/results/synthesized-sa.slab.vox", S, palette);
+  saveAsVox(SRC_PATH "/data/results/synthesized-sa.slab.vox", S, palette);
 }
 
 // This is where it all begins.
 int main(int argc, char **argv) 
 {
   try {
-    // random seed
+	int num_init  = 8;
+	int init_temp = 100;
+	double alpha  = 0.95;
+	int steps     = 200;
+	int substeps  = 8;
+	
+	// Parse input arguments
+	if (argc == 4 || argc == 9) {
+	  sz      = std::stoi(argv[1]);  // size of the problem
+	  problem = argv[2];             // file in exemplars/ with extension .slab.vox
+	  scene   = argv[3];             // file in scenes/ with extension .slab.vox
+
+	  if (argc == 9) {
+		num_init  = std::stoi(argv[4]);
+		init_temp = std::stoi(argv[5]);
+		alpha     = std::stod(argv[6]);
+		steps     = std::stoi(argv[7]);
+		substeps  = std::stoi(argv[8]);
+	  }
+	}
+	
     srand((unsigned int)time(NULL));
-    
-    // let's synthesize!
-    std::cerr << Console::white << "Synthesizing a voxel model!" << Console::gray << std::endl << std::endl;
+    std::cerr << Console::white << "Synthesizing a voxel model!"
+			  << Console::gray << std::endl << std::endl;
     
     //solve3D();
 
-    simulated_annealing(16, 100, 0.9, 200, 8);
+    simulated_annealing(num_init, init_temp, alpha, steps, substeps);
 
   } catch (Fatal& e) {
     std::cerr << Console::red << e.message() << Console::gray << std::endl;
